@@ -1,0 +1,83 @@
+name: NX2Apple Windows toolchain trial
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  doctor:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out this test repo
+        uses: actions/checkout@v4
+
+      - name: Check out NX2Apple v1.2.1
+        uses: actions/checkout@v4
+        with:
+          repository: LNPANDY/NX2Apple
+          ref: v1.2.1
+          path: nx2apple
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install .NET SDK 10
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://dot.net/v1/dotnet-install.ps1 -OutFile dotnet-install.ps1
+          .\dotnet-install.ps1 -Channel 10.0 -InstallDir "$env:RUNNER_TEMP\dotnet"
+          "$env:RUNNER_TEMP\dotnet" | Out-File -FilePath $env:GITHUB_PATH -Append
+          & "$env:RUNNER_TEMP\dotnet\dotnet.exe" --list-sdks
+
+      - name: Install zstd
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-v1.5.7-win64.zip -OutFile zstd.zip
+          Expand-Archive zstd.zip -DestinationPath "$env:RUNNER_TEMP\zstd"
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\zstd" -Recurse -Filter zstd.exe | Select-Object -First 1
+          $exe.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append
+          & $exe.FullName --version
+
+      - name: Doctor --fix --sdk (install LLVM-MinGW + iPhoneOS SDK)
+        working-directory: nx2apple/frontend-qt
+        shell: bash
+        run: |
+          python -m nspb_qt.win.doctor --fix --sdk || true
+
+      - name: Doctor report (JSON)
+        working-directory: nx2apple/frontend-qt
+        shell: bash
+        run: |
+          python -m nspb_qt.win.doctor --json > doctor.json || true
+          cat doctor.json
+
+      - name: Verdict
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, sys
+          probes = json.load(open('nx2apple/frontend-qt/doctor.json'))
+          for p in probes:
+              print(f"{p['state']:8} required={p['required']}  {p['name']}: {p['detail']}")
+          missing = [p['id'] for p in probes if p['required'] and p['state'] != 'ok']
+          print('MISSING REQUIRED:', missing)
+          if missing == ['metal']:
+              print('VERDICT: everything except Metal Developer Tools (Apple ID download) is in place')
+              sys.exit(0)
+          if not missing:
+              print('VERDICT: full toolchain OK')
+              sys.exit(0)
+          print('VERDICT: other required pieces missing too')
+          sys.exit(1)
+          PY
+
+      - name: Upload doctor report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doctor-report
+          path: nx2apple/frontend-qt/doctor.json
+          if-no-files-found: ignore
