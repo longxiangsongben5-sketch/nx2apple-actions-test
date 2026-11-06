@@ -50,6 +50,21 @@ jobs:
         run: |
           python -m nspb_qt.win.doctor --fix --sdk || true
 
+      - name: Prefer the LLVM-MinGW linker over the runner's older LLVM
+        shell: pwsh
+        run: |
+          $toolRoot = Get-ChildItem "$env:LOCALAPPDATA\NS Port Builder\tools" -Directory -Filter "llvm-mingw-*" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($toolRoot) {
+            $bin = Join-Path $toolRoot.FullName "bin"
+            if ((Test-Path "$bin\ld.lld.exe") -and -not (Test-Path "$bin\ld64.lld.exe")) {
+              Copy-Item "$bin\ld.lld.exe" "$bin\ld64.lld.exe"
+              Write-Host "created $bin\ld64.lld.exe from ld.lld.exe"
+            }
+            if (Test-Path "$bin\ld64.lld.exe") { & "$bin\ld64.lld.exe" --version }
+          } else {
+            Write-Host "no llvm-mingw tool dir found"
+          }
+
       - name: Doctor report (JSON)
         working-directory: nx2apple/frontend-qt
         shell: bash
